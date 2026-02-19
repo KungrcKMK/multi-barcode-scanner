@@ -3,160 +3,137 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Ultimate Multi-Scanner (QR & Barcode)</title>
-    <script type="text/javascript" src="https://unpkg.com/@zxing/library@latest"></script>
+    <title>Native Fast Scanner</title>
     <style>
-        body, html { 
-            margin: 0; padding: 0; width: 100%; height: 100%; 
-            overflow: hidden; background: #000; font-family: sans-serif;
-        }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; font-family: sans-serif; }
         #video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
         #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none; }
-        
         #ui-layer { position: absolute; bottom: 20px; left: 10px; right: 10px; z-index: 3; pointer-events: none; }
-        #status-box { background: rgba(0, 0, 0, 0.8); color: white; padding: 15px; border-radius: 12px; max-height: 200px; overflow-y: auto; pointer-events: auto; border: 1px solid #444; }
+        #status-box { background: rgba(0, 0, 0, 0.8); color: white; padding: 15px; border-radius: 12px; max-height: 250px; overflow-y: auto; pointer-events: auto; }
         
         #start-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #111; z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; }
-        #start-btn { padding: 18px 40px; font-size: 1.2rem; font-weight: bold; background: #007bff; color: white; border: none; border-radius: 50px; cursor: pointer; box-shadow: 0 4px 15px rgba(0,123,255,0.4); }
+        #start-btn { padding: 15px 30px; font-size: 1.2rem; background: #28a745; color: white; border: none; border-radius: 50px; cursor: pointer; }
         
-        .code-item { font-family: monospace; font-size: 0.85rem; border-bottom: 1px solid #333; padding: 6px 0; display: flex; justify-content: space-between; align-items: center; }
-        .code-type { background: #444; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; margin-right: 8px; color: #00ff00; }
+        .code-item { border-bottom: 1px solid #444; padding: 8px 0; display: flex; justify-content: space-between; font-family: monospace; font-size: 0.9rem; }
+        .format-badge { background: #007bff; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; color: white; margin-right: 8px; }
     </style>
 </head>
 <body>
 
     <div id="start-screen">
-        <h2>Multi-Format Scanner</h2>
-        <p style="color: #888; margin-bottom: 25px;">QR Code & Barcode Support</p>
-        <button id="start-btn" onclick="initScanner()">แตะเพื่อเริ่มสแกน</button>
+        <h2>Native Barcode API</h2>
+        <button id="start-btn" onclick="startCamera()">เริ่มสแกน (รวดเร็วพิเศษ)</button>
     </div>
 
-    <video id="video" playsinline muted></video>
+    <video id="video" playsinline muted autoplay></video>
     <canvas id="overlay"></canvas>
 
     <div id="ui-layer">
         <div id="status-box">
-            <div style="font-weight: bold; display: flex; justify-content: space-between; margin-bottom: 8px;">
-                <span>รายการที่สแกนพบ: <span id="count">0</span></span>
-                <button onclick="location.reload()" style="background:none; border:none; color:#007bff; cursor:pointer; font-size:0.8rem;">ล้างทั้งหมด</button>
+            <div style="font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #555; padding-bottom: 5px;">
+                สแกนพบ: <span id="count">0</span>
             </div>
             <div id="codes-list"></div>
         </div>
     </div>
 
     <script>
-        const codeReader = new ZXing.BrowserMultiFormatReader();
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('overlay');
+        const ctx = canvas.getContext('2d');
         const foundCodes = new Set();
-        
-        async function initScanner() {
-            const videoEl = document.getElementById('video');
-            const startScreen = document.getElementById('start-screen');
-            const canvas = document.getElementById('overlay');
-            const ctx = canvas.getContext('2d');
-            
+        let barcodeDetector;
+
+        // ตรวจสอบว่า Browser รองรับเทคโนโลยีนี้หรือไม่
+        if (!('BarcodeDetector' in window)) {
+            alert("อุปกรณ์/Browser ของคุณไม่รองรับ Native Barcode API แนะนำให้ใช้ Google Chrome บน Android หรือ macOS ครับ");
+        } else {
+            // ตั้งค่าให้อ่านเฉพาะ Barcode ทั่วไป (ตัด QR ออกไปก่อนเพื่อให้โฟกัสบาร์โค้ด)
+            barcodeDetector = new BarcodeDetector({ 
+                formats: ['ean_13', 'code_128', 'code_39', 'ean_8', 'itf', 'qr_code'] 
+            });
+        }
+
+        async function startCamera() {
+            document.getElementById('start-screen').style.display = 'none';
             try {
-                startScreen.style.display = 'none';
-
-                const constraints = {
-                    video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
-                };
-
-                // ตั้งค่าให้อ่านหลาย Format พร้อมกัน
-                const hints = new Map();
-                hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-                hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-                    ZXing.BarcodeFormat.QR_CODE,
-                    ZXing.BarcodeFormat.DATA_MATRIX,
-                    ZXing.BarcodeFormat.CODE_128,
-                    ZXing.BarcodeFormat.CODE_39,
-                    ZXing.BarcodeFormat.EAN_13,
-                    ZXing.BarcodeFormat.EAN_8,
-                    ZXing.BarcodeFormat.ITF
-                ]);
-
-                // เริ่มกระบวนการสแกนแบบต่อเนื่อง
-                codeReader.decodeFromConstraints(constraints, 'video', (result, err) => {
-                    canvas.width = videoEl.videoWidth;
-                    canvas.height = videoEl.videoHeight;
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-                    if (result) {
-                        const codeText = result.getText();
-                        const format = result.getBarcodeFormat(); // ดึงประเภทของโค้ด (QR หรือ Barcode)
-                        const points = result.getResultPoints();
-
-                        // วาดกรอบ Tracking
-                        drawFrame(ctx, points, format);
-
-                        if (!foundCodes.has(codeText)) {
-                            foundCodes.add(codeText);
-                            beep();
-                            addToList(codeText, format);
-                        }
-                    }
-                }, hints);
-
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+                });
+                video.srcObject = stream;
+                
+                // รอให้วิดีโอเล่นก่อนค่อยเริ่มสแกน
+                video.addEventListener('play', () => {
+                    requestAnimationFrame(scanLoop);
+                });
             } catch (err) {
-                console.error(err);
-                alert("ไม่สามารถเข้าถึงกล้องได้: " + err.message);
-                startScreen.style.display = 'flex';
+                alert("เปิดกล้องไม่ได้: " + err.message);
             }
         }
 
-        function drawFrame(ctx, points, format) {
-            if (!points || points.length === 0) return;
+        async function scanLoop() {
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // กำหนดสีตามประเภท (QR = เขียว, Barcode = ฟ้า)
-            const isQR = points.length >= 4;
-            ctx.strokeStyle = isQR ? "#00FF00" : "#00CCFF";
-            ctx.lineWidth = 6;
-            ctx.lineJoin = "round";
-            
+                try {
+                    // คำสั่งค้นหาบาร์โค้ดทั้งหมดในเฟรม (เร็วมากและอ่านเอียงได้)
+                    const barcodes = await barcodeDetector.detect(video);
+                    
+                    if (barcodes.length > 0) {
+                        barcodes.forEach(barcode => {
+                            drawBoundingBox(barcode);
+                            
+                            const codeValue = barcode.rawValue;
+                            if (!foundCodes.has(codeValue)) {
+                                foundCodes.add(codeValue);
+                                beep();
+                                addToList(codeValue, barcode.format);
+                            }
+                        });
+                    }
+                } catch (e) {
+                    // ข้าม error ไปเพื่อไม่ให้ loop ค้าง
+                }
+            }
+            // วนลูปสแกนเฟรมถัดไป
+            requestAnimationFrame(scanLoop);
+        }
+
+        function drawBoundingBox(barcode) {
+            const { cornerPoints } = barcode;
+            if (!cornerPoints || cornerPoints.length === 0) return;
+
+            ctx.strokeStyle = '#00FF00';
+            ctx.lineWidth = 5;
             ctx.beginPath();
-            ctx.moveTo(points[0].x, points[0].y);
-            points.forEach(p => ctx.lineTo(p.x, p.y));
-            if (isQR) ctx.lineTo(points[0].x, points[0].y);
+            ctx.moveTo(cornerPoints[0].x, cornerPoints[0].y);
+            for (let i = 1; i < cornerPoints.length; i++) {
+                ctx.lineTo(cornerPoints[i].x, cornerPoints[i].y);
+            }
+            ctx.closePath();
             ctx.stroke();
-
-            // วาดจุดที่มุม
-            ctx.fillStyle = isQR ? "#00FF00" : "#00CCFF";
-            points.forEach(p => {
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, 8, 0, 2 * Math.PI);
-                ctx.fill();
-            });
         }
 
         function addToList(text, format) {
             const list = document.getElementById('codes-list');
-            const formatName = getFormatName(format);
             const div = document.createElement('div');
             div.className = 'code-item';
-            div.innerHTML = `
-                <span><span class="code-type">${formatName}</span>${text}</span>
-                <span style="color: #666; font-size: 0.7rem;">${new Date().toLocaleTimeString()}</span>
-            `;
+            div.innerHTML = `<span><span class="format-badge">${format.toUpperCase()}</span>${text}</span>`;
             list.prepend(div);
             document.getElementById('count').innerText = foundCodes.size;
         }
 
-        function getFormatName(format) {
-            // แปลงรหัสตัวเลข format ให้เป็นชื่ออ่านง่าย
-            const formats = { 11: 'QR', 1: 'C128', 4: 'C39', 7: 'EAN13', 6: 'EAN8' };
-            return formats[format] || 'Code';
-        }
-
         function beep() {
             try {
-                const ctx = new (window.AudioContext || window.webkitAudioContext)();
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.connect(gain);
-                gain.connect(ctx.destination);
-                osc.frequency.value = 1100;
-                gain.gain.value = 0.05;
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = audioCtx.createOscillator();
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+                osc.connect(audioCtx.destination);
                 osc.start();
-                osc.stop(ctx.currentTime + 0.1);
+                osc.stop(audioCtx.currentTime + 0.05);
             } catch(e) {}
         }
     </script>
